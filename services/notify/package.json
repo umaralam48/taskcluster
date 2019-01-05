@@ -6,7 +6,7 @@
   "license": "MPL-2.0",
   "scripts": {
     "heroku-prebuild": "echo $SOURCE_VERSION > .git-version",
-    "test": "mocha test/*_test.js",
+    "test": "jest",
     "lint": "eslint src/*.js test/*.js"
   },
   "dependencies": {
@@ -20,5 +20,11 @@
     "marked": "^0.3.12",
     "nodemailer": "^4.7.0",
     "slugid": "^1.1.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/test/*_test.js"
+    ]
   }
 }
