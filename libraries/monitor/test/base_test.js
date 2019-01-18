@@ -1,31 +1,15 @@
-const BaseMonitor = require('../src/base');
+const Monitor = require('../src');
 const assert = require('assert');
-
-class TestMonitor extends BaseMonitor {
-  constructor() {
-    super();
-    this.measures = [];
-    this.counts = [];
-    this.errors = [];
-  }
-
-  measure(prefix, ms) {
-    this.measures.push({prefix, ms});
-  }
-
-  count(prefix, val) {
-    this.counts.push({prefix, val});
-  }
-
-  reportError(err) {
-    this.errors.push(err);
-  }
-}
 
 suite('BaseMonitor', function() {
   let monitor;
   setup(function() {
-    monitor = new TestMonitor();
+    monitor = new Monitor({
+      projectName: 'taskcluster-testing-service',
+      mock: {
+        allowExit: true,
+      },
+    });
   });
 
   suite('timer', function() {
@@ -34,8 +18,8 @@ suite('BaseMonitor', function() {
       // check this after a short delay, as otherwise the Promise.resolve
       // can measure something after timer returns..
       return new Promise(resolve => setTimeout(resolve, 10)).then(() => {
-        assert.equal(monitor.measures.length, len);
-        monitor.measures.forEach(m => assert.equal(m.prefix, 'pfx'));
+        assert.equal(monitor.events.length, len);
+        monitor.events.forEach(m => assert.equal(m.Type, 'root.pfx'));
       });
     };
 
@@ -54,7 +38,7 @@ suite('BaseMonitor', function() {
     test('of an async function', async function() {
       assert.equal(await monitor.timer('pfx', takes100ms), 13);
       await checkMonitor(1);
-      assert(monitor.measures[0].ms >= 90);
+      assert(monitor.events[0].Fields.val >= 90);
     });
 
     test('of an async function that fails', async function() {
@@ -71,7 +55,7 @@ suite('BaseMonitor', function() {
     test('of a promise', async function() {
       assert.equal(await monitor.timer('pfx', takes100ms()), 13);
       await checkMonitor(1);
-      assert(monitor.measures[0].ms >= 90);
+      assert(monitor.events[0].Fields.val >= 90);
     });
 
     test('of a failed promise', async function() {
@@ -105,23 +89,23 @@ suite('BaseMonitor', function() {
     test('successful async function', async function() {
       await monitor.oneShot('expire', async () => {});
       assert.equal(exitStatus, 0);
-      assert.equal(monitor.measures[0].prefix, 'expire.duration');
-      assert.equal(monitor.counts[0].prefix, 'expire.done');
-      assert.equal(monitor.errors.length, 0);
+      assert.equal(monitor.events[0].Type, 'root.expire.duration');
+      assert.equal(monitor.events[1].Type, 'root.expire.done');
+      assert.equal(monitor.events.length, 2);
     });
 
     test('unsuccessful async function', async function() {
       await monitor.oneShot('expire', async () => { throw new Error('uhoh'); });
       assert.equal(exitStatus, 1);
-      assert.equal(monitor.measures[0].prefix, 'expire.duration');
-      assert.equal(monitor.counts.length, 0);
-      assert(monitor.errors[0].toString().match(/uhoh/), monitor.errors[0]);
+      assert.equal(monitor.events[0].Type, 'root.expire.duration');
+      assert.equal(monitor.events.length, 2);
+      assert.equal(monitor.events[1].Fields.error, 'Error: uhoh');
     });
 
     test('missing name', async function() {
       await monitor.oneShot(async () => { throw new Error('uhoh'); });
       assert.equal(exitStatus, 1);
-      assert(monitor.errors[0].toString().match(/Assertion/), monitor.errors[0]);
+      assert(monitor.events[0].Fields.error.startsWith('AssertionError'));
     });
   });
 });
