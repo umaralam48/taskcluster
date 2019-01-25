@@ -7,7 +7,7 @@ const stream = require('stream');
 const mozlog = require('mozlog');
 const TimeKeeper = require('./timekeeper');
 
-class BaseMonitor {
+class Monitor {
   /**
    * Create a new monitor, given options:
    * {
@@ -28,18 +28,25 @@ class BaseMonitor {
     resourceInterval = 10,
     mock = false,
     enable = true,
-    gitVersion = null,
     gitVersionFile = '.git-version',
     processName = null,
     level = 'INFO',
     subject = 'root',
+    metadata = {
+      gitVersion: null,
+    },
     ...extra
   }) {
     assert(projectName, 'Must provide a project name (this is now `projectName` instead of `project`)');
     assert(!extra.credentials && !extra.statsumToken && !extra.sentryDSN, 'Credentials are no longer required for lib-monitor.');
     assert(!extra.process, 'monitor.process is now monitor.processName');
 
+    this.projectName = projectName;
     this.mock = mock;
+    this.enable = enable;
+    this.level = level;
+    this.subject = subject;
+    this.metadata = metadata;
 
     let outputDest;
     if (mock) {
@@ -61,46 +68,60 @@ class BaseMonitor {
     }
 
     const logger = mozlog({
-      app: projectName,
+      app: `${projectName}.${subject}`,
       level: level,
       stream: outputDest,
       uncaught: 'ignore', // We handle this ourselves
     });
 
-    this.log = logger(subject);
-
-    this.gitVersion = gitVersion;
+    this.log = logger();
 
     // read gitVersionFile, if gitVersion is not set
-    if (!this.gitVersion) {
+    if (!metadata.gitVersion) {
       gitVersionFile = path.resolve(rootdir.get(), gitVersionFile);
       try {
-        this.gitVersion = fs.readFileSync(gitVersionFile).toString().trim();
+        metadata.gitVersion = fs.readFileSync(gitVersionFile).toString().trim();
       } catch (err) {
         // ignore error - we just get no gitVersion
       }
     }
 
     if (patchGlobal) {
-      process.on('uncaughtException', (err) => {
-        this.reportError(err, 'fatal', {});
-        process.exit(1);
-      });
+      this.uncaughtExceptionHandler = this._uncaughtExceptionHandler.bind(this);
+      process.on('uncaughtException', this.uncaughtExceptionHandler);
 
-      process.on('unhandledRejection', (reason, p) => {
-        const err = 'Unhandled Rejection at: Promise ' + p + ' reason: ' + reason;
-        if (!bailOnUnhandledRejection) {
-          this.reportError(err, 'error', {sort: 'unhandledRejection'});
-          return;
-        }
-        this.reportError(err, 'fatal', {});
-        process.exit(1);
-      });
+      this.unhandledRejectionHandler = this._unhandledRejectionHandler.bind(this);
+      process.on('unhandledRejection', this.unhandledRejectionHandler);
     }
 
     if (processName) {
       this.resources(processName, resourceInterval);
     }
+  }
+
+  _uncaughtExceptionHandler(err) {
+    this.reportError(err);
+    process.exit(1);
+  }
+
+  _unhandledRejectionHandler(reason, p) {
+    const err = 'Unhandled Rejection at: Promise ' + p + ' reason: ' + reason;
+    if (!bailOnUnhandledRejection) {
+      this.reportError(err, 'error', {sort: 'unhandledRejection'});
+      return;
+    }
+    this.reportError(err, 'fatal', {});
+    process.exit(1);
+  }
+
+  /*
+   * TODO
+   */
+  terminate() {
+    this.log.removeAllHandlers();
+    this.stopResourceMonitoring();
+    process.removeListener('uncaughtException', this.uncaughtExceptionHandler);
+    process.removeListener('unhandledRejection', this.unhandledRejectionHandler);
   }
 
   timer(key, funcOrPromise) {
@@ -285,7 +306,7 @@ class BaseMonitor {
       this.log.error('count.invalid', {key, val});
       return;
     }
-    this.log.info(key, {val});
+    this.log.info(key, {val, ...this.metadata});
   }
 
   /*
@@ -298,7 +319,7 @@ class BaseMonitor {
       this.log.error('measure.invalid', {key, val});
       return;
     }
-    this.log.info(key, {val});
+    this.log.info(key, {val, ...this.metadata});
   }
 
   /*
@@ -312,11 +333,30 @@ class BaseMonitor {
    * TODO
    */
   reportError(err) {
-    this.log.error('error', err);
+    this.log.error('error', {
+      error: err.toString(),
+      stack: err.stack,
+      ...this.metadata,
+    });
   }
 
-  // TODO: Handle prefix stuff!
+  /**
+   * TODO
+   */
+  prefix(pre, metadata = {}) {
+    return new Monitor({
+      projectName: this.projectName,
+      patchGlobal: false, // Handled by root
+      bailOnUnhandledRejection: false, // Handled by root
+      mock: this.mock,
+      enable: this.enable,
+      processName: null, // Handled by root
+      level: this.level,
+      subject: `${this.subject}.${pre}`,
+      metadata: Object.assign({}, this.metadata, metadata),
+    });
+  }
 
 }
 
-module.exports = BaseMonitor;
+module.exports = Monitor;

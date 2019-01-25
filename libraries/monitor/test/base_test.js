@@ -3,6 +3,7 @@ const assert = require('assert');
 
 suite('BaseMonitor', function() {
   let monitor;
+
   setup(function() {
     monitor = new Monitor({
       projectName: 'taskcluster-testing-service',
@@ -10,6 +11,10 @@ suite('BaseMonitor', function() {
         allowExit: true,
       },
     });
+  });
+
+  teardown(function() {
+    monitor.terminate();
   });
 
   suite('timer', function() {
@@ -106,6 +111,52 @@ suite('BaseMonitor', function() {
       await monitor.oneShot(async () => { throw new Error('uhoh'); });
       assert.equal(exitStatus, 1);
       assert(monitor.events[0].Fields.error.startsWith('AssertionError'));
+    });
+  });
+
+  suite('prefix', function() {
+
+    test('prefixes make sense', function() {
+      const child = monitor.prefix('api');
+      monitor.count('foobar', 5);
+      child.count('foobar', 6);
+
+      assert.equal(monitor.events.length, 1);
+      assert.equal(child.events.length, 1);
+      assert.equal(monitor.events[0].Type, 'root.foobar');
+      assert.equal(child.events[0].Type, 'root.api.foobar');
+      assert.equal(monitor.events[0].Fields.val, 5);
+      assert.equal(child.events[0].Fields.val, 6);
+    });
+
+    test('can double prefix', function() {
+      const child = monitor.prefix('api');
+      const grandchild = child.prefix('something');
+      monitor.count('foobar', 5);
+      child.count('foobar', 6);
+      grandchild.count('foobar', 7);
+
+      assert.equal(monitor.events.length, 1);
+      assert.equal(child.events.length, 1);
+      assert.equal(monitor.events[0].Type, 'root.foobar');
+      assert.equal(child.events[0].Type, 'root.api.foobar');
+      assert.equal(grandchild.events[0].Type, 'root.api.something.foobar');
+      assert.equal(monitor.events[0].Fields.val, 5);
+      assert.equal(child.events[0].Fields.val, 6);
+      assert.equal(grandchild.events[0].Fields.val, 7);
+    });
+
+    test('metadata is merged', function() {
+      const child = monitor.prefix('api', {addition: 1000});
+      monitor.measure('bazbing', 5);
+      child.measure('bazbing', 6);
+
+      assert.equal(monitor.events.length, 1);
+      assert.equal(child.events.length, 1);
+      assert.equal(monitor.events[0].Type, 'root.bazbing');
+      assert.equal(child.events[0].Type, 'root.api.bazbing');
+      assert.equal(monitor.events[0].Fields.addition, null);
+      assert.equal(child.events[0].Fields.addition, 1000);
     });
   });
 });
